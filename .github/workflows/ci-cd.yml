@@ -1,0 +1,135 @@
+# =============================================================================
+#  .github/workflows/ci-cd.yml
+#  - job build : validate student.env -> build & smoke test -> push image to GHCR
+#  - job deploy: SSH into server -> pull image -> restart stack
+# =============================================================================
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - name: Checkout mã nguồn
+        uses: actions/checkout@v4
+
+      - name: Kiểm tra thông tin trong student.env
+        run: |
+          set -a; source student.env; set +a
+          for v in STUDENT_NAME STUDENT_ID STUDENT_CLASS STUDENT_EMAIL GITHUB_USERNAME \
+                   APP_PORT COMPOSE_PROJECT_NAME MYSQL_USER MYSQL_PASSWORD MYSQL_ROOT_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "::error file=student.env::Chưa điền $v trong student.env"
+              exit 1
+            fi
+          done
+          if [ "$APP_PORT" -lt 8080 ]; then
+            echo "::error file=student.env::APP_PORT phải từ 8080 trở lên"
+            exit 1
+          fi
+          echo "### Sinh viên: $STUDENT_NAME - $STUDENT_ID - $STUDENT_CLASS" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Đặt tên image
+        id: meta
+        run: echo "image=${REGISTRY}/${GITHUB_REPOSITORY,,}/app" >> "$GITHUB_OUTPUT"
+
+      # TODO 1 (resolved): build and start full stack with Docker Compose
+      - name: Build & chạy thử bằng Docker Compose
+        env:
+          APP_IMAGE: ${{ steps.meta.outputs.image }}
+          APP_TAG: ${{ github.sha }}
+          APP_VERSION: ${{ github.sha }}
+        run: docker compose --env-file student.env up -d --build --wait --wait-timeout 300
+
+      - name: Smoke test
+        run: |
+          set -a; source student.env; set +a
+          BASE="http://localhost:${APP_PORT}"
+          curl -fsS --retry 12 --retry-delay 5 --retry-all-errors "$BASE/api/labs" | grep -q '"id"'
+          echo "Smoke test OK"
+
+      - name: In log khi lỗi
+        if: failure()
+        run: docker compose --env-file student.env logs --no-color
+
+      # TODO 2 (resolved): login to GHCR using github.actor and secrets.GITHUB_TOKEN
+      - name: Đăng nhập GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # TODO 3 (resolved): push image with two tags: commit SHA and latest
+      - name: Push image lên GHCR
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: |
+          docker tag "$IMAGE:${{ github.sha }}" "ghcr.io/${{ github.repository_owner }}/devops-final-app:${{ github.sha }}"
+          docker tag "$IMAGE:${{ github.sha }}" "ghcr.io/${{ github.repository_owner }}/devops-final-app:latest"
+          docker push "ghcr.io/${{ github.repository_owner }}/devops-final-app:${{ github.sha }}"
+          docker push "ghcr.io/${{ github.repository_owner }}/devops-final-app:latest"
+
+      - name: Dọn dẹp
+        if: always()
+        run: docker compose --env-file student.env down -v
+
+  deploy:
+    name: Deploy lên server
+    # TODO 4 (resolved): only run when build job succeeds
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout mã nguồn
+        uses: actions/checkout@v4
+
+      # TODO 6 (resolved): connect via SSH using SERVER_HOST, SERVER_USER, SERVER_SSH_KEY secrets
+      # TODO 7 (resolved): deploy script - create folder, copy files, pull & restart
+      - name: Deploy qua SSH
+        uses: appleboy/ssh-action@v0.1.10
+        env:
+          APP_IMAGE: ghcr.io/${{ github.repository_owner }}/devops-final-app:${{ github.sha }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOY_DIR: ${{ github.event.repository.name }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          envs: APP_IMAGE,GHCR_USER,GHCR_TOKEN,DEPLOY_DIR
+          script: |
+            set -e
+            # Create app folder if it doesn't exist
+            mkdir -p "$HOME/$DEPLOY_DIR"
+            cd "$HOME/$DEPLOY_DIR"
+
+            # Login to GHCR
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+            # Export image reference for docker-compose
+            export APP_IMAGE
+
+            # Pull the new app image (no build on server)
+            docker compose --env-file student.env pull app
+
+            # Start/restart the stack (no build)
+            docker compose --env-file student.env up -d --no-build
+
+            docker logout ghcr.io
+            docker compose --env-file student.env ps

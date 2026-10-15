@@ -1,0 +1,79 @@
+# =============================================================================
+#  docker-compose.yml
+#  - Service "mysql", networks, volumes: already configured, do not modify.
+#  - System: Spring Boot backend (JSON), Nginx reverse proxy, MySQL.
+#  - Networks: proxy-net (nginx <-> app), db-net (app <-> mysql); MySQL does NOT publish ports.
+#  - Run:  docker compose --env-file student.env up -d --build
+# =============================================================================
+name: ${COMPOSE_PROJECT_NAME:?Chua dien COMPOSE_PROJECT_NAME trong student.env}
+
+services:
+  # ---------------------------------------------------------------- MySQL
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - db-net
+
+  # ---------------------------------------------------------------- Spring Boot
+  app:
+    # TODO 1 (resolved): build from repo root, pass APP_VERSION build-arg
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-local}
+    # TODO 2 (resolved): image name from APP_IMAGE env var
+    image: ${APP_IMAGE:-devops-final-app:latest}
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      # TODO 3 (resolved): database name, user, password from student.env
+      DB_NAME: ${MYSQL_DATABASE}
+      DB_USER: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Ho_Chi_Minh
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - db-net
+      - proxy-net
+
+  # ---------------------------------------------------------------- Nginx (reverse proxy)
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    # TODO 4 (resolved): publish personal port APP_PORT -> container port 80
+    ports:
+      - "${APP_PORT}:80"
+    # TODO 5 (resolved): mount nginx config read-only
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+    networks:
+      - proxy-net
+
+networks:
+  proxy-net:
+  db-net:
+
+volumes:
+  mysql_data:
