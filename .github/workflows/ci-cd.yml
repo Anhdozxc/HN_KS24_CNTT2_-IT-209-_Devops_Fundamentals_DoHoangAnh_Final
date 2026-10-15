@@ -44,7 +44,7 @@ jobs:
 
       - name: Đặt tên image
         id: meta
-        run: echo "image=${REGISTRY}/${GITHUB_REPOSITORY,,}/app" >> "$GITHUB_OUTPUT"
+        run: echo "image=${REGISTRY}/anhdozxc/devops-final-app" >> "$GITHUB_OUTPUT"
 
       # TODO 1 (resolved): build and start full stack with Docker Compose
       - name: Build & chạy thử bằng Docker Compose
