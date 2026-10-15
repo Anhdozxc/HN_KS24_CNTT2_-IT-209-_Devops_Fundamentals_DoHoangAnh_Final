@@ -2,6 +2,9 @@
 #  .github/workflows/ci-cd.yml
 #  - job build : validate student.env -> build & smoke test -> push image to GHCR
 #  - job deploy: SSH into server -> pull image -> restart stack
+#
+#  NOTE: Image path is hardcoded as ghcr.io/anhdozxc/devops-final-app (all lowercase)
+#        to avoid "invalid reference format" errors from dynamic repository expressions.
 # =============================================================================
 name: CI/CD
 
@@ -12,6 +15,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/anhdozxc/devops-final-app
 
 jobs:
   build:
@@ -44,12 +48,11 @@ jobs:
 
       - name: Đặt tên image
         id: meta
-        run: echo "image=${REGISTRY}/anhdozxc/devops-final-app" >> "$GITHUB_OUTPUT"
+        run: echo "image=ghcr.io/anhdozxc/devops-final-app" >> "$GITHUB_OUTPUT"
 
-      # TODO 1 (resolved): build and start full stack with Docker Compose
       - name: Build & chạy thử bằng Docker Compose
         env:
-          APP_IMAGE: ${{ steps.meta.outputs.image }}
+          APP_IMAGE: ghcr.io/anhdozxc/devops-final-app
           APP_TAG: ${{ github.sha }}
           APP_VERSION: ${{ github.sha }}
         run: docker compose --env-file student.env up -d --build --wait --wait-timeout 300
@@ -65,7 +68,6 @@ jobs:
         if: failure()
         run: docker compose --env-file student.env logs --no-color
 
-      # TODO 2 (resolved): login to GHCR using github.actor and secrets.GITHUB_TOKEN
       - name: Đăng nhập GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -73,15 +75,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # TODO 3 (resolved): push image with two tags: commit SHA and latest
       - name: Push image lên GHCR
-        env:
-          IMAGE: ${{ steps.meta.outputs.image }}
         run: |
-          docker tag "$IMAGE:${{ github.sha }}" "ghcr.io/${{ github.repository_owner }}/devops-final-app:${{ github.sha }}"
-          docker tag "$IMAGE:${{ github.sha }}" "ghcr.io/${{ github.repository_owner }}/devops-final-app:latest"
-          docker push "ghcr.io/${{ github.repository_owner }}/devops-final-app:${{ github.sha }}"
-          docker push "ghcr.io/${{ github.repository_owner }}/devops-final-app:latest"
+          docker tag "ghcr.io/anhdozxc/devops-final-app:${{ github.sha }}" "ghcr.io/anhdozxc/devops-final-app:latest"
+          docker push "ghcr.io/anhdozxc/devops-final-app:${{ github.sha }}"
+          docker push "ghcr.io/anhdozxc/devops-final-app:latest"
 
       - name: Dọn dẹp
         if: always()
@@ -89,7 +87,6 @@ jobs:
 
   deploy:
     name: Deploy lên server
-    # TODO 4 (resolved): only run when build job succeeds
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -99,12 +96,10 @@ jobs:
       - name: Checkout mã nguồn
         uses: actions/checkout@v4
 
-      # TODO 6 (resolved): connect via SSH using SERVER_HOST, SERVER_USER, SERVER_SSH_KEY secrets
-      # TODO 7 (resolved): deploy script - create folder, copy files, pull & restart
       - name: Deploy qua SSH
         uses: appleboy/ssh-action@v0.1.10
         env:
-          APP_IMAGE: ghcr.io/${{ github.repository_owner }}/devops-final-app:${{ github.sha }}
+          APP_IMAGE: ghcr.io/anhdozxc/devops-final-app:${{ github.sha }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEPLOY_DIR: ${{ github.event.repository.name }}
@@ -122,13 +117,13 @@ jobs:
             # Login to GHCR
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
-            # Export image reference for docker-compose
-            export APP_IMAGE
+            # Export hardcoded lowercase image reference for docker-compose
+            export APP_IMAGE="ghcr.io/anhdozxc/devops-final-app:${{ github.sha }}"
 
             # Pull the new app image (no build on server)
             docker compose --env-file student.env pull app
 
-            # Start/restart the stack (no build)
+            # Start/restart the stack (no build on server)
             docker compose --env-file student.env up -d --no-build
 
             docker logout ghcr.io
