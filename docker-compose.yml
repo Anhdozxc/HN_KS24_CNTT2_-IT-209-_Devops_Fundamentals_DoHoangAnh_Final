@@ -38,8 +38,8 @@ services:
       context: .
       args:
         APP_VERSION: ${APP_VERSION:-local}
-    # TODO 2 (resolved): image name from APP_IMAGE env var
-    image: ${APP_IMAGE:-devops-final-app:latest}
+    # TODO 2 (resolved): image name from APP_IMAGE and APP_TAG
+    image: ${APP_IMAGE:-devops-final-app}:${APP_TAG:-latest}
     restart: unless-stopped
     environment:
       DB_HOST: mysql
