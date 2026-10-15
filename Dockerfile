@@ -4,7 +4,7 @@
 # =============================================================================
 
 # ---------- Stage 1: build - compile & package with Gradle + JDK 21 ----------
-FROM gradle:8.15-jdk21-alpine AS build
+FROM gradle:8.14-jdk21-alpine AS build
 WORKDIR /workspace
 
 # Copy build scripts first to leverage Docker layer caching for dependencies
